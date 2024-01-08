@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'listener = IWISUM_project.subscriber_example:main',
             'talker = IWISUM_project.publisher_example:main',
+            'f1tenth_controller = IWISUM_project.f1tenth_controller:main',
         ],
     },
 )
