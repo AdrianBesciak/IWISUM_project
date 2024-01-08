@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
+from ackermann_msgs.msg import AckermannDriveStamped
 
 class F1tenthController(Node):
 
@@ -12,6 +13,8 @@ class F1tenthController(Node):
             'scan',
             self.lidar_callback,
             10)
+        self.publisher_ = self.create_publisher(AckermannDriveStamped, 'drive', 10)
+        self.prepare_and_send_drive_message(1.0, 0.5, 0.5)
         # self.subscription  # prevent unused variable warning
 
     def lidar_callback(self, msg):
@@ -21,7 +24,21 @@ class F1tenthController(Node):
         range_min = msg.range_min
         range_max = msg.range_max
         ranges = msg.ranges # list of measurements
-        self.get_logger().info(f'Received measuremnt[angle_min: {angle_min}, angle_max: {angle_max}, angle_increment: {angle_increment}, range_max: {range_max}]')
+        # self.get_logger().info(f'Received measuremnt[angle_min: {angle_min}, angle_max: {angle_max}, angle_increment: {angle_increment}, range_max: {range_max}]')
+
+    def prepare_and_send_drive_message(self, velocity, angle, acceleration):
+        msg = AckermannDriveStamped()
+
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'f1tenth_controller'
+        msg.drive.speed = velocity
+        msg.drive.acceleration = acceleration
+        msg.drive.jerk = 0.1
+        msg.drive.steering_angle = angle
+
+        self.get_logger().info(f"Prepared ackermann message: {msg}")
+        self.publisher_.publish(msg)
+
 
 
 def main(args=None):
