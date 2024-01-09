@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 def fuzzy_logic_model(lidar_msg):
     angle_min = lidar_msg.angle_min
@@ -20,7 +21,9 @@ class F1tenthController(Node):
     def __init__(self):
         super().__init__('f1tenth_controller')
         self.last_lidar_record = None
-        self.publisher_ = self.create_publisher(AckermannDriveStamped, 'drive', 10)
+        self.driving_publisher = self.create_publisher(AckermannDriveStamped, 'drive', 10)
+        self.reset_position_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        self.i = 0
 
         self.subscription = self.create_subscription(
             LaserScan,
@@ -45,7 +48,7 @@ class F1tenthController(Node):
         msg.drive.steering_angle = float(angle)
 
         self.get_logger().info(f"Prepared ackermann message: {msg}")
-        self.publisher_.publish(msg)
+        self.driving_publisher.publish(msg)
 
     def timer_callback(self):
         if self.last_lidar_record != None:
@@ -53,6 +56,21 @@ class F1tenthController(Node):
             result = fuzzy_logic_model(self.last_lidar_record)
             print(result)
             self.prepare_and_send_drive_message(result['velocity'], result['steering_wheel_angle'], result['acceleration'])
+            if self.i % 50 == 0:
+                self.get_logger().info(f"Sending reset position message")
+                self.reset_position()
+            self.i += 1
+
+    def reset_position(self):
+        initialpose_msg = PoseWithCovarianceStamped()
+        initialpose_msg.pose.pose.position.x = 0.0
+        initialpose_msg.pose.pose.position.y = 0.0
+        initialpose_msg.pose.pose.position.z = 0.0
+        initialpose_msg.pose.pose.orientation.x = 0.4
+        initialpose_msg.pose.pose.orientation.y = 0.4
+        initialpose_msg.pose.pose.orientation.z = 0.0
+        initialpose_msg.pose.pose.orientation.w = 1.0
+        self.reset_position_publisher.publish(initialpose_msg)
 
 
 
