@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+import time
 
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -23,7 +24,7 @@ class F1tenthController(Node):
         self.last_lidar_record = None
         self.driving_publisher = self.create_publisher(AckermannDriveStamped, 'drive', 10)
         self.reset_position_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
-        self.i = 0
+        self.reset_position()
 
         self.subscription = self.create_subscription(
             LaserScan,
@@ -36,6 +37,21 @@ class F1tenthController(Node):
 
     def lidar_callback(self, msg):
         self.last_lidar_record = msg
+        if self.is_collision():
+            self.handle_collision()
+
+    def is_collision(self):
+        collision_threshold = 0.2
+        for dist in self.last_lidar_record.ranges:
+            if dist < collision_threshold:
+                return True
+        return False
+
+    def handle_collision(self):
+        self.get_logger().info(f"Collision detected! Sending reset position message")
+        self.reset_position()
+        time.sleep(1)
+
 
     def prepare_and_send_drive_message(self, velocity, angle, acceleration):
         msg = AckermannDriveStamped()
@@ -47,19 +63,12 @@ class F1tenthController(Node):
         msg.drive.jerk = 0.1
         msg.drive.steering_angle = float(angle)
 
-        self.get_logger().info(f"Prepared ackermann message: {msg}")
         self.driving_publisher.publish(msg)
 
     def timer_callback(self):
         if self.last_lidar_record != None:
-            self.get_logger().info('Processing lidar records')
             result = fuzzy_logic_model(self.last_lidar_record)
-            print(result)
             self.prepare_and_send_drive_message(result['velocity'], result['steering_wheel_angle'], result['acceleration'])
-            if self.i % 50 == 0:
-                self.get_logger().info(f"Sending reset position message")
-                self.reset_position()
-            self.i += 1
 
     def reset_position(self):
         initialpose_msg = PoseWithCovarianceStamped()
