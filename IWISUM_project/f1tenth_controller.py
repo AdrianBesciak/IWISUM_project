@@ -1,86 +1,95 @@
-import rclpy
-from rclpy.node import Node
 import time
 
+import rclpy
+from ackermann_msgs.msg import AckermannDrive, AckermannDriveStamped
+from geometry_msgs import msg as gmsg
+from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from ackermann_msgs.msg import AckermannDriveStamped
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from std_msgs.msg import Header
 
-def fuzzy_logic_model(lidar_msg):
-    angle_min = lidar_msg.angle_min
-    angle_max = lidar_msg.angle_max
-    angle_increment = lidar_msg.angle_increment
-    range_min = lidar_msg.range_min
-    range_max = lidar_msg.range_max
-    ranges = lidar_msg.ranges # list of measurements
+from .follow import follow
 
-    result = {'velocity': 1, 'acceleration': 0.1, 'steering_wheel_angle': 0.5}
-    return result
+# import stable_baselines3 as sb3
+# model = sb3.PPO.load("f110-model")
+
 
 class F1tenthController(Node):
+    def __init__(self, timer_period_s: float = 0.1):
+        super().__init__("f1tenth_controller")
+        self.get_logger().info("Controller started!")
 
-    def __init__(self):
-        super().__init__('f1tenth_controller')
-        self.last_lidar_record = None
-        self.driving_publisher = self.create_publisher(AckermannDriveStamped, 'drive', 10)
-        self.reset_position_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        self._last_lidar_record: LaserScan | None = None
+        self._drive_publisher = self.create_publisher(
+            AckermannDriveStamped, "drive", 10
+        )
+        self._reset_position_publisher = self.create_publisher(
+            gmsg.PoseWithCovarianceStamped, "initialpose", 10
+        )
+
+        self._subscription = self.create_subscription(
+            LaserScan, "scan", self._lidar_callback, 10
+        )
+        self._timer = self.create_timer(timer_period_s, self.timer_callback)
         self.reset_position()
 
-        self.subscription = self.create_subscription(
-            LaserScan,
-            'scan',
-            self.lidar_callback,
-            10)
+    def _lidar_callback(self, msg: LaserScan):
+        self._last_lidar_record = msg
 
-        timer_period_s = 0.1  # seconds
-        self.timer = self.create_timer(timer_period_s, self.timer_callback)
+        if self.collides(msg):
+            self._handle_collision()
 
-    def lidar_callback(self, msg):
-        self.last_lidar_record = msg
-        if self.is_collision():
-            self.handle_collision()
+    @staticmethod
+    def collides(msg: LaserScan, collision_threshold: float = 0.2):
+        return any(dist < collision_threshold for dist in msg.ranges)
 
-    def is_collision(self):
-        collision_threshold = 0.2
-        for dist in self.last_lidar_record.ranges:
-            if dist < collision_threshold:
-                return True
-        return False
-
-    def handle_collision(self):
-        self.get_logger().info(f"Collision detected! Sending reset position message")
+    def _handle_collision(self):
+        self.get_logger().info("Collision detected! Sending reset position message")
         self.reset_position()
         time.sleep(1)
 
-
-    def prepare_and_send_drive_message(self, velocity, angle, acceleration):
-        msg = AckermannDriveStamped()
-
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'f1tenth_controller'
-        msg.drive.speed = float(velocity)
-        msg.drive.acceleration = float(acceleration)
-        msg.drive.jerk = 0.1
-        msg.drive.steering_angle = float(angle)
-
-        self.driving_publisher.publish(msg)
+    def prepare_and_send_drive_message(self, drive: AckermannDrive):
+        msg = AckermannDriveStamped(
+            header=Header(
+                stamp=self.get_clock().now().to_msg(), frame_id="f1tenth_controller"
+            ),
+            drive=drive,
+        )
+        self._drive_publisher.publish(msg)
 
     def timer_callback(self):
-        if self.last_lidar_record != None:
-            result = fuzzy_logic_model(self.last_lidar_record)
-            self.prepare_and_send_drive_message(result['velocity'], result['steering_wheel_angle'], result['acceleration'])
+        if self._last_lidar_record is not None:
+            scan = self._last_lidar_record
+
+            # Follow the Gap
+            speed, steering_angle = follow(scan)
+
+            # RL Model
+            # action, _states = model.predict(np.array(scan.ranges))
+            # speed, steering_angle = action
+
+            drive = AckermannDrive(
+                speed=speed,
+                steering_angle=steering_angle,
+            )
+
+            self.prepare_and_send_drive_message(drive=drive)
 
     def reset_position(self):
-        initialpose_msg = PoseWithCovarianceStamped()
-        initialpose_msg.pose.pose.position.x = 0.0
-        initialpose_msg.pose.pose.position.y = 0.0
-        initialpose_msg.pose.pose.position.z = 0.0
-        initialpose_msg.pose.pose.orientation.x = 0.4
-        initialpose_msg.pose.pose.orientation.y = 0.4
-        initialpose_msg.pose.pose.orientation.z = 0.0
-        initialpose_msg.pose.pose.orientation.w = 1.0
-        self.reset_position_publisher.publish(initialpose_msg)
+        initialpose_msg = gmsg.PoseWithCovarianceStamped(
+            pose=gmsg.PoseWithCovariance(
+                pose=gmsg.Pose(
+                    position=gmsg.Point(x=0.0, y=0.0, z=0.0),
+                    orientation=gmsg.Quaternion(x=0.4, y=0.4, z=0.0, w=1.0),
+                )
+            )
+        )
+        self._reset_position_publisher.publish(initialpose_msg)
 
+        drive = AckermannDrive(
+            speed=0.0,
+            steering_angle=0.0,
+        )
+        self.prepare_and_send_drive_message(drive=drive)
 
 
 def main(args=None):
@@ -97,5 +106,5 @@ def main(args=None):
     rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
